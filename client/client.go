@@ -3,12 +3,13 @@ package client
 import (
 	"crypto/ecdsa"
 	"fmt"
-	"github.com/ipfs/go-log"
 	"math/big"
 	"os"
 	"path"
 	"strconv"
 	"time"
+
+	"github.com/ipfs/go-log"
 
 	lib "github.com/bnb-chain/tss-lib/v2/common"
 	"github.com/bnb-chain/tss-lib/v2/ecdsa/keygen"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/bnb-chain/tss/common"
 	"github.com/bnb-chain/tss/p2p"
+	goeth "github.com/ethereum/go-ethereum/crypto"
 )
 
 var Logger = log.Logger("tss")
@@ -191,6 +193,7 @@ func NewTssClient(config *common.TssConfig, mode ClientMode, mock bool) *TssClie
 		if err != nil {
 			panic(err)
 		}
+		Logger.Infof("[%s] message to sign: %s\n", config.Message)
 		Logger.Debugf("[%s] address is: %s\n", config.Moniker, address)
 		params := tss.NewParameters(tss.EC(), p2pCtx, partyID, config.Parties, config.Threshold)
 		c.key = &key
@@ -243,6 +246,7 @@ func (client *TssClient) Start() {
 	switch client.mode {
 	case SignMode:
 		message, ok := big.NewInt(0).SetString(client.config.Message, 10)
+		fmt.Printf("message to be signed: %s\n", message.String())
 		if !ok {
 			common.Panic(fmt.Errorf("message to be sign: %s is not a valid big.Int", client.config.Message))
 		}
@@ -325,12 +329,15 @@ func (client *TssClient) saveDataRoutine(saveCh <-chan keygen.LocalPartySaveData
 			}
 		}
 
-		address, err := GetAddress(ecdsa.PublicKey{tss.EC(), msg.ECDSAPub.X(), msg.ECDSAPub.Y()}, client.config.AddressPrefix)
-		if err != nil {
-			Logger.Errorf("[%s] failed to generate address from public key :%v", client.config.Moniker, err)
-		} else {
-			Logger.Infof("[%s] bech32 address is: %s", client.config.Moniker, address)
-		}
+		//address, err := GetAddress(ecdsa.PublicKey{tss.EC(), msg.ECDSAPub.X(), msg.ECDSAPub.Y()}, client.config.AddressPrefix)
+		//if err != nil {
+		//	Logger.Errorf("[%s] failed to generate address from public key :%v", client.config.Moniker, err)
+		//} else {
+		//	Logger.Infof("[%s] bech32 address is: %s", client.config.Moniker, address)
+		//}
+
+		address_eth := goeth.PubkeyToAddress(ecdsa.PublicKey{tss.EC(), msg.ECDSAPub.X(), msg.ECDSAPub.Y()})
+		Logger.Infof("[%s] eth address is: %s", client.config.Moniker, address_eth.Hex())
 
 		wPriv, err := os.OpenFile(path.Join(client.config.Home, client.config.Vault, "sk.json"), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 		if err != nil {
