@@ -66,7 +66,13 @@ func (client *TssClient) signImpl(m *big.Int) ([]byte, error) {
 
 	<-done
 	Logger.Debugf("[%s] received signature: %X", client.config.Moniker, client.signature)
-	return client.signature, nil
+
+	// Add V to the signature
+	sigWithV := make([]byte, 65)
+	copy(sigWithV[:64], client.signature)
+	sigWithV[64] = client.SignatureRecovery[0]
+
+	return sigWithV, nil
 }
 
 // This helper method is used by PubKey interface in keys.go
