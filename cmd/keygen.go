@@ -49,7 +49,7 @@ var keygenCmd = &cobra.Command{
 		c.Start()
 
 		updateConfig()
-		addToBnbcli(c.PubKey())
+		//addToBnbcli(c.PubKey())
 	},
 }
 
