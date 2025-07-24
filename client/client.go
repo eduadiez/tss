@@ -190,7 +190,7 @@ func NewTssClient(config *common.TssConfig, mode ClientMode, mock bool) *TssClie
 		//pubKey := btcec.PublicKey(ecdsa.PublicKey{tss.EC(), key.ECDSAPub.X(), key.ECDSAPub.Y()})
 		//Logger.Infof("[%s] public key: %X\n", config.Moniker, pubKey.SerializeCompressed())
 		pubKey_ethereum := goeth.PubkeyToAddress(ecdsa.PublicKey{tss.EC(), key.ECDSAPub.X(), key.ECDSAPub.Y()})
-		Logger.Infof("[%s] eth address is: %s", config.config.Moniker, pubKey_ethereum.Hex())
+		Logger.Infof("[%s] eth address is: %s", config.Moniker, pubKey_ethereum.Hex())
 
 		address, err := GetAddress(ecdsa.PublicKey{tss.EC(), key.ECDSAPub.X(), key.ECDSAPub.Y()}, config.AddressPrefix)
 		if err != nil {
