@@ -67,8 +67,16 @@ var bootstrapCmd = &cobra.Command{
 		done := make(chan bool)
 		go acceptConnRoutine(listener, bootstrapper, done)
 
-		peerAddrs := findPeerAddrsViaSsdp(numOfPeers, listenAddrs)
-		client.Logger.Debugf("Found peers via ssdp: %v", peerAddrs)
+		peerAddrs := make([]string, 0)
+
+		if len(common.TssCfg.P2PConfig.PeerAddrs) == 0 {
+			client.Logger.Debugf("No peer addresses found in P2PConfig.PeerAddrs, using SSDP to discover peers")
+			peerAddrs = findPeerAddrsViaSsdp(numOfPeers, listenAddrs)
+			client.Logger.Debugf("Found peers via ssdp: %v", peerAddrs)
+		} else {
+			client.Logger.Debugf("Using configured peer addresses: %v", common.TssCfg.P2PConfig.PeerAddrs)
+			peerAddrs = common.TssCfg.P2PConfig.PeerAddrs
+		}
 
 		go func() {
 			for _, peerAddr := range peerAddrs {
