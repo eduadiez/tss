@@ -7,10 +7,6 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
-	"github.com/ipfs/go-datastore"
-	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-yamux"
-	"github.com/multiformats/go-multiaddr"
 	"io/ioutil"
 	"os"
 	"path"
@@ -19,19 +15,21 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/libp2p/go-libp2p"
+	swarm "github.com/libp2p/go-libp2p/p2p/net/swarm"
+	"github.com/libp2p/go-yamux"
+	"github.com/multiformats/go-multiaddr"
+
 	"github.com/bnb-chain/tss-lib/v2/tss"
-	relay "github.com/libp2p/go-libp2p-circuit"
-	ifconnmgr "github.com/libp2p/go-libp2p-core/connmgr"
-	"github.com/libp2p/go-libp2p-core/crypto"
-	"github.com/libp2p/go-libp2p-core/host"
-	"github.com/libp2p/go-libp2p-core/network"
-	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p-core/peerstore"
-	"github.com/libp2p/go-libp2p-core/protocol"
 	libp2pdht "github.com/libp2p/go-libp2p-kad-dht"
-	opts "github.com/libp2p/go-libp2p-kad-dht/opts"
-	"github.com/libp2p/go-libp2p-peerstore/pstoremem"
-	swarm "github.com/libp2p/go-libp2p-swarm"
+	ifconnmgr "github.com/libp2p/go-libp2p/core/connmgr"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
+	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/bnb-chain/tss/common"
@@ -65,7 +63,7 @@ type p2pTransporter struct {
 
 	pathToRouteTable      string
 	expectedPeers         []peer.ID
-	streams               sync.Map // map[peer.ID.Pretty()]network.Stream
+	streams               sync.Map // map[peer.ID.String()]network.Stream
 	encoders              sync.Map // map[common.TssClientId]*gob.Encoder
 	numOfStreams          int32    // atomic int of len(streams)
 	numOfBootstrapStreams int32    // atomic int of len(bootstrapStreams)
@@ -112,7 +110,7 @@ func NewP2PTransporter(
 		t.bootstrapper = bootstrapper
 	}
 	t.pathToRouteTable = path.Join(home, vault, "rt/")
-	ps := pstoremem.NewPeerstore()
+	ps, _ := pstoremem.NewPeerstore()
 	t.setExpectedPeers(nodeId, signers, ps, config) // t.expectedPeers will be updated in this method
 	t.bootstrapPeers = config.BootstrapPeers
 	// TODO: relay addr need further confirm
@@ -122,7 +120,7 @@ func NewP2PTransporter(
 		if err != nil {
 			common.Panic(err)
 		}
-		relayAddr, err := multiaddr.NewMultiaddr("/p2p-circuit/p2p/" + relayPeerInfo.ID.Pretty())
+		relayAddr, err := multiaddr.NewMultiaddr("/p2p-circuit/p2p/" + relayPeerInfo.ID.String())
 		if err != nil {
 			common.Panic(err)
 		}
@@ -160,12 +158,11 @@ func NewP2PTransporter(
 	}
 
 	host, err := libp2p.New(
-		t.ctx,
 		libp2p.Peerstore(ps),
 		libp2p.ConnectionManager(t),
 		libp2p.ListenAddrs(addr),
 		libp2p.Identity(privKey),
-		libp2p.EnableRelay(relay.OptDiscovery),
+		libp2p.EnableRelay(),
 		libp2p.NATPortMap(), // actually I cannot find a case that NATPortMap can help, but in case some edge case, created it to save relay server performance
 	)
 	if err != nil {
@@ -282,7 +279,7 @@ func (t *p2pTransporter) Notifee() network.Notifiee {
 // implementation of
 
 func (t *p2pTransporter) handleStream(stream network.Stream) {
-	pid := stream.Conn().RemotePeer().Pretty()
+	pid := stream.Conn().RemotePeer().ShortString()
 	logger.Infof("Connected to: %s(%s)", pid, stream.Protocol())
 
 	if _, loaded := t.streams.LoadOrStore(pid, stream); !loaded {
@@ -292,7 +289,7 @@ func (t *p2pTransporter) handleStream(stream network.Stream) {
 }
 
 func (t *p2pTransporter) handleSigner(stream network.Stream) {
-	pid := stream.Conn().RemotePeer().Pretty()
+	pid := stream.Conn().RemotePeer().ShortString()
 	logger.Infof("Connected to: %s(%s)", pid, stream.Protocol())
 
 	// TODO: figure out why sometimes the localaddr is 0.0.0.0
@@ -412,14 +409,14 @@ func (t *p2pTransporter) readDataRoutine(pid string, stream network.Stream) {
 				var numOfDest int
 				if to == nil {
 					for _, p := range t.expectedPeers {
-						if p.Pretty() != pid {
+						if p.String() != pid {
 							// send our hashing of this message
 							msgWithHashPayload, err := proto.Marshal(msgWithHash)
 							if err != nil {
 								common.Panic(fmt.Errorf("cannot marshal P2PMessageWithHash: %v", err))
 							}
 							msgWithHashPayload = append([]byte{HashMessagePrefix}, msgWithHashPayload...)
-							err = t.Send(msgWithHashPayload, common.TssClientId(p.Pretty()))
+							err = t.Send(msgWithHashPayload, common.TssClientId(p.String()))
 							numOfDest++
 							if err != nil {
 								common.Panic(fmt.Errorf("cannot send P2PMessageWithHash: %v", err))
@@ -526,7 +523,7 @@ func (t *p2pTransporter) initBootstrapConnection(dht *libp2pdht.IpfsDHT) {
 
 func (t *p2pTransporter) initConnection(dht *libp2pdht.IpfsDHT) {
 	for _, pid := range t.expectedPeers {
-		if stream, ok := t.streams.Load(pid.Pretty()); ok && stream != nil {
+		if stream, ok := t.streams.Load(pid.String()); ok && stream != nil {
 			continue
 		}
 
@@ -547,7 +544,7 @@ func (t *p2pTransporter) initConnection(dht *libp2pdht.IpfsDHT) {
 }
 
 func (t *p2pTransporter) connectRoutine(dht *libp2pdht.IpfsDHT, pid peer.ID, protocolId string) {
-	logger.Debugf("trying to connect with %s", pid.Pretty())
+	logger.Debugf("trying to connect with %s", pid.String())
 	timeout := time.NewTimer(15 * time.Minute)
 	defer func() {
 		timeout.Stop()
@@ -597,7 +594,7 @@ func (t *p2pTransporter) connectRoutine(dht *libp2pdht.IpfsDHT, pid peer.ID, pro
 				err := t.host.Connect(t.ctx, peer.AddrInfo{pid, t.host.Peerstore().Addrs(pid)})
 				if err != nil {
 					if err != swarm.ErrDialBackoff {
-						logger.Debugf("Direct Connection to %s failed, will retry, err: %v", pid.Pretty(), err)
+						logger.Debugf("Direct Connection to %s failed, will retry, err: %v", pid.String(), err)
 					}
 					continue
 				} else {
@@ -627,7 +624,7 @@ func (t *p2pTransporter) connectRoutine(dht *libp2pdht.IpfsDHT, pid peer.ID, pro
 
 func (t *p2pTransporter) tryRelaying(pid peer.ID, protocolId string) error {
 	t.host.Network().(*swarm.Swarm).Backoff().Clear(pid)
-	relayaddr, err := multiaddr.NewMultiaddr("/p2p-circuit/p2p/" + pid.Pretty())
+	relayaddr, err := multiaddr.NewMultiaddr("/p2p-circuit/p2p/" + pid.String())
 	relayInfo := peer.AddrInfo{
 		ID:    pid,
 		Addrs: []multiaddr.Multiaddr{relayaddr},
@@ -656,13 +653,10 @@ func (t *p2pTransporter) setupDHTClient() *libp2pdht.IpfsDHT {
 	//if err != nil {
 	//	common.Panic(err)
 	//}
-	ds := datastore.NewMapDatastore()
 
 	kademliaDHT, err := libp2pdht.New(
 		t.ctx,
 		t.host,
-		opts.Datastore(ds),
-		opts.Client(true),
 	)
 	if err != nil {
 		common.Panic(err)
@@ -719,13 +713,13 @@ func (t *p2pTransporter) setExpectedPeers(nodeId string, signers map[string]int,
 	}
 
 	for expectedPeer, peerAddr := range mergedExpectedPeers {
-		if pid, err := peer.IDB58Decode(string(GetClientIdFromExpectedPeers(expectedPeer))); err != nil {
+		if pid, err := peer.Decode(string(GetClientIdFromExpectedPeers(expectedPeer))); err != nil {
 			common.Panic(err)
 		} else {
-			if pid.Pretty() == nodeId {
+			if pid.String() == nodeId {
 				continue
 			}
-			logger.Debugf("expect peer: %s", pid.Pretty())
+			logger.Debugf("expect peer: %s", pid.String())
 			if peerAddr != "" {
 				maddr, err := multiaddr.NewMultiaddr(peerAddr)
 				if err != nil {

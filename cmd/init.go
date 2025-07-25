@@ -2,17 +2,17 @@ package cmd
 
 import (
 	"bufio"
-	"context"
 	"fmt"
-	"github.com/libp2p/go-libp2p"
-	"github.com/multiformats/go-multiaddr"
 	"io/ioutil"
 	"os"
 	"path"
 	"strings"
 
+	"github.com/libp2p/go-libp2p"
+	"github.com/multiformats/go-multiaddr"
+
 	"github.com/bgentry/speakeasy"
-	"github.com/libp2p/go-libp2p-core/crypto"
+	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/phayes/freeport"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -50,7 +50,7 @@ var initCmd = &cobra.Command{
 		if err != nil {
 			common.Panic(err)
 		}
-		host, err := libp2p.New(context.Background(), libp2p.ListenAddrs(addr))
+		host, err := libp2p.New(libp2p.ListenAddrs(addr))
 		if err != nil {
 			common.Panic(err)
 		}

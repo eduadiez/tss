@@ -2,20 +2,18 @@ package server
 
 import (
 	"context"
-	leveldb "github.com/ipfs/go-ds-leveldb"
-	"github.com/ipfs/go-log"
-	"github.com/libp2p/go-libp2p"
-	"github.com/multiformats/go-multiaddr"
 	"io/ioutil"
 	"os"
 	"path"
 
+	"github.com/ipfs/go-log"
+	"github.com/libp2p/go-libp2p"
+	"github.com/multiformats/go-multiaddr"
+
 	"github.com/bnb-chain/tss/common"
 	"github.com/bnb-chain/tss/p2p"
-	relay "github.com/libp2p/go-libp2p-circuit"
-	"github.com/libp2p/go-libp2p-core/crypto"
 	libp2pdht "github.com/libp2p/go-libp2p-kad-dht"
-	opts "github.com/libp2p/go-libp2p-kad-dht/opts"
+	"github.com/libp2p/go-libp2p/core/crypto"
 )
 
 var logger = log.Logger("srv")
@@ -47,17 +45,11 @@ func NewTssBootstrapServer(home string, config common.P2PConfig) *TssBootstrapSe
 
 	ctx := context.Background()
 	host, err := libp2p.New(
-		ctx,
 		libp2p.ListenAddrs(addr),
 		libp2p.Identity(privKey),
-		libp2p.EnableRelay(relay.OptHop),
+		libp2p.EnableRelay(),
 		libp2p.NATPortMap(),
 	)
-	if err != nil {
-		common.Panic(err)
-	}
-
-	ds, err := leveldb.NewDatastore(path.Join(home, "rt/"), nil)
 	if err != nil {
 		common.Panic(err)
 	}
@@ -65,8 +57,7 @@ func NewTssBootstrapServer(home string, config common.P2PConfig) *TssBootstrapSe
 	kademliaDHT, err := libp2pdht.New(
 		ctx,
 		host,
-		opts.Datastore(ds),
-		opts.Client(false))
+	)
 	if err != nil {
 		common.Panic(err)
 	}
@@ -74,7 +65,7 @@ func NewTssBootstrapServer(home string, config common.P2PConfig) *TssBootstrapSe
 	go p2p.DumpDHTRoutine(kademliaDHT)
 	go p2p.DumpPeersRoutine(host)
 
-	logger.Info("Bootstrap server has started, id: ", host.ID().Pretty())
+	logger.Info("Bootstrap server has started, id: ", host.ID().String())
 
 	return &bs
 }

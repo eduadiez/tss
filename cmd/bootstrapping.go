@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/bgentry/speakeasy"
+	"github.com/libp2p/go-libp2p"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/proto"
 
@@ -18,6 +20,8 @@ import (
 	"github.com/bnb-chain/tss/common"
 	"github.com/bnb-chain/tss/p2p"
 	"github.com/bnb-chain/tss/ssdp"
+	kaddht "github.com/libp2p/go-libp2p-kad-dht"
+	dhtdisc "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 )
 
 func init() {
@@ -144,6 +148,65 @@ func setChannelPasswd() {
 		common.TssCfg.ChannelPassword = p
 	} else {
 		common.Panic(err)
+	}
+}
+
+func findPeerAddrsViaDHT() {
+	const rendezvousString = "libp2p-dht-example"
+
+	ctx := context.Background()
+	// Crear un host libp2p (nodo local)
+	host, err := libp2p.New()
+	if err != nil {
+		panic(err)
+	}
+	defer host.Close()
+	// Imprime direcciones locales
+	fmt.Println(":large_green_circle: Host escuchando en:")
+	for _, addr := range host.Addrs() {
+		fullAddr := fmt.Sprintf("%s/p2p/%s", addr, host.ID())
+		fmt.Println(fullAddr)
+	}
+	// Crea una instancia DHT
+	dht, err := kaddht.New(ctx, host)
+	if err != nil {
+		panic(err)
+	}
+	// Arranca el DHT
+	if err := dht.Bootstrap(ctx); err != nil {
+		panic(err)
+	}
+
+	// Usa una red pública de bootstrap
+	bootstrapPeers := kaddht.GetDefaultBootstrapPeerAddrInfos()
+	for _, peerInfo := range bootstrapPeers {
+		if err := host.Connect(ctx, peerInfo); err != nil {
+			fmt.Println(":warning: Error al conectar a bootstrap peer:", err)
+		} else {
+			fmt.Println(":white_check_mark: Conectado a bootstrap peer:", peerInfo.ID.String())
+		}
+	}
+	// Usa el DHT como motor de descubrimiento
+	routingDiscovery := dhtdisc.NewRoutingDiscovery(dht)
+	// Anúnciate en la red
+	_, err = routingDiscovery.Advertise(ctx, rendezvousString)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(":loudspeaker: Anunciado en la red con etiqueta:", rendezvousString)
+	// Descubre otros peers anunciados
+	peerChan, err := routingDiscovery.FindPeers(ctx, rendezvousString)
+	if err != nil {
+		panic(err)
+	}
+	for peer := range peerChan {
+		if peer.ID == host.ID() {
+			continue // Ignora a sí mismo
+		}
+		fmt.Println(":wave: Nodo encontrado:", peer.ID)
+		for _, addr := range peer.Addrs {
+			fmt.Println(":satellite_antenna: Dirección:", addr.String())
+		}
 	}
 }
 
