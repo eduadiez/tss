@@ -3,13 +3,14 @@ package p2p
 import (
 	"crypto/rand"
 	"fmt"
-	"github.com/ipfs/go-log"
-	"github.com/libp2p/go-libp2p-core/crypto"
-	"github.com/libp2p/go-libp2p-core/host"
-	"github.com/libp2p/go-libp2p-core/peer"
-	libp2pdht "github.com/libp2p/go-libp2p-kad-dht"
 	"strings"
 	"time"
+
+	"github.com/ipfs/go-log"
+	libp2pdht "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/bnb-chain/tss/common"
 )

@@ -359,6 +359,7 @@ func (client *TssClient) saveDataRoutine(saveCh <-chan *keygen.LocalPartySaveDat
 			common.Panic(err)
 		}
 
+		time.Sleep(1 * time.Second)
 		if done != nil {
 			done <- true
 			close(done)

@@ -7,8 +7,8 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/libp2p/go-libp2p-core/crypto"
-	"github.com/libp2p/go-libp2p-core/peer"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/bnb-chain/tss/common"
 	"github.com/bnb-chain/tss/p2p"
@@ -36,7 +36,7 @@ func Setup(cfg common.TssConfig) {
 		if err != nil {
 			common.Panic(err)
 		}
-		allPeerIds = append(allPeerIds, fmt.Sprintf("%s@%s", fmt.Sprintf("party%d", i), pid.Pretty()))
+		allPeerIds = append(allPeerIds, fmt.Sprintf("%s@%s", fmt.Sprintf("party%d", i), pid.String()))
 
 		bytes, err := crypto.MarshalPrivateKey(privKey)
 		if err != nil {

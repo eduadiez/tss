@@ -1,11 +1,11 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
+	"strings"
+
 	"github.com/libp2p/go-libp2p"
 	"github.com/multiformats/go-multiaddr"
-	"strings"
 
 	"github.com/bnb-chain/tss/common"
 )
@@ -15,7 +15,7 @@ func getListenAddrs(listenAddr string) string {
 	if err != nil {
 		common.Panic(err)
 	}
-	host, err := libp2p.New(context.Background(), libp2p.ListenAddrs(addr))
+	host, err := libp2p.New(libp2p.ListenAddrs(addr))
 	if err != nil {
 		common.Panic(err)
 	}

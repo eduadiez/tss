@@ -2,15 +2,10 @@ package p2p
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
-	"github.com/ipfs/go-datastore"
-	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-yamux"
-	"github.com/multiformats/go-multiaddr"
 	"io/ioutil"
 	"os"
 	"path"
@@ -19,20 +14,28 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ipfs/go-datastore"
+	"github.com/libp2p/go-libp2p"
+
+	"github.com/libp2p/go-yamux"
+	"github.com/multiformats/go-multiaddr"
+
 	"github.com/bnb-chain/tss-lib/v2/tss"
-	relay "github.com/libp2p/go-libp2p-circuit"
-	ifconnmgr "github.com/libp2p/go-libp2p-core/connmgr"
-	"github.com/libp2p/go-libp2p-core/crypto"
-	"github.com/libp2p/go-libp2p-core/host"
-	"github.com/libp2p/go-libp2p-core/network"
-	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-libp2p-core/peerstore"
-	"github.com/libp2p/go-libp2p-core/protocol"
+
 	libp2pdht "github.com/libp2p/go-libp2p-kad-dht"
-	opts "github.com/libp2p/go-libp2p-kad-dht/opts"
-	"github.com/libp2p/go-libp2p-peerstore/pstoremem"
-	swarm "github.com/libp2p/go-libp2p-swarm"
+	ifconnmgr "github.com/libp2p/go-libp2p/core/connmgr"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/protocol"
+
+	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
+
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/peerstore"
 	"google.golang.org/protobuf/proto"
+
+	"crypto/sha256"
 
 	"github.com/bnb-chain/tss/common"
 )
@@ -65,7 +68,7 @@ type p2pTransporter struct {
 
 	pathToRouteTable      string
 	expectedPeers         []peer.ID
-	streams               sync.Map // map[peer.ID.Pretty()]network.Stream
+	streams               sync.Map // map[peer.ID.String()]network.Stream
 	encoders              sync.Map // map[common.TssClientId]*gob.Encoder
 	numOfStreams          int32    // atomic int of len(streams)
 	numOfBootstrapStreams int32    // atomic int of len(bootstrapStreams)
@@ -112,7 +115,10 @@ func NewP2PTransporter(
 		t.bootstrapper = bootstrapper
 	}
 	t.pathToRouteTable = path.Join(home, vault, "rt/")
-	ps := pstoremem.NewPeerstore()
+	ps, err := pstoremem.NewPeerstore()
+	if err != nil {
+		common.Panic(fmt.Errorf("failed to create peerstore: %w", err))
+	}
 	t.setExpectedPeers(nodeId, signers, ps, config) // t.expectedPeers will be updated in this method
 	t.bootstrapPeers = config.BootstrapPeers
 	// TODO: relay addr need further confirm
@@ -122,7 +128,7 @@ func NewP2PTransporter(
 		if err != nil {
 			common.Panic(err)
 		}
-		relayAddr, err := multiaddr.NewMultiaddr("/p2p-circuit/p2p/" + relayPeerInfo.ID.Pretty())
+		relayAddr, err := multiaddr.NewMultiaddr("/p2p-circuit/p2p/" + relayPeerInfo.ID.String())
 		if err != nil {
 			common.Panic(err)
 		}
@@ -160,13 +166,11 @@ func NewP2PTransporter(
 	}
 
 	host, err := libp2p.New(
-		t.ctx,
 		libp2p.Peerstore(ps),
-		libp2p.ConnectionManager(t),
 		libp2p.ListenAddrs(addr),
 		libp2p.Identity(privKey),
-		libp2p.EnableRelay(relay.OptDiscovery),
-		libp2p.NATPortMap(), // actually I cannot find a case that NATPortMap can help, but in case some edge case, created it to save relay server performance
+		//libp2p.EnableRelayService(),
+		libp2p.NATPortMap(),
 	)
 	if err != nil {
 		common.Panic(err)
@@ -209,11 +213,20 @@ func (t *p2pTransporter) Broadcast(msg tss.Message) error {
 			}
 		}
 		if shouldSend {
-			payload, e := proto.Marshal(msg.WireMsg())
+			wireMsg := msg.WireMsg()
+			logger.Debugf("WireMsg details - From: %v, IsBroadcast: %v, To: %v",
+				wireMsg.From, wireMsg.IsBroadcast, wireMsg.To)
+			payload, e := proto.Marshal(wireMsg)
 			if e != nil {
-				err = fmt.Errorf("failed to encode protobuf message: %v, broadcast stop", err)
+				err = fmt.Errorf("failed to encode protobuf message: %v, broadcast stop", e)
 				return false
 			}
+			showBytes := 20
+			if len(payload) < showBytes {
+				showBytes = len(payload)
+			}
+			logger.Debugf("Broadcasting MessageWrapper, length: %d, first few bytes: %v",
+				len(payload), payload[:showBytes])
 			payload = append([]byte{MessagePrefix}, payload...)
 			if e := t.Send(payload, common.TssClientId(to.(string))); e != nil {
 				err = e
@@ -282,7 +295,7 @@ func (t *p2pTransporter) Notifee() network.Notifiee {
 // implementation of
 
 func (t *p2pTransporter) handleStream(stream network.Stream) {
-	pid := stream.Conn().RemotePeer().Pretty()
+	pid := stream.Conn().RemotePeer().String()
 	logger.Infof("Connected to: %s(%s)", pid, stream.Protocol())
 
 	if _, loaded := t.streams.LoadOrStore(pid, stream); !loaded {
@@ -292,7 +305,7 @@ func (t *p2pTransporter) handleStream(stream network.Stream) {
 }
 
 func (t *p2pTransporter) handleSigner(stream network.Stream) {
-	pid := stream.Conn().RemotePeer().Pretty()
+	pid := stream.Conn().RemotePeer().String()
 	logger.Infof("Connected to: %s(%s)", pid, stream.Protocol())
 
 	// TODO: figure out why sometimes the localaddr is 0.0.0.0
@@ -374,7 +387,8 @@ func (t *p2pTransporter) readDataRoutine(pid string, stream network.Stream) {
 			if err != nil {
 				common.Panic(fmt.Errorf("failed to read protobuf message: %v, from: %s", err, pid))
 			} else {
-				payloadWithTypePrefix = append(payloadWithTypePrefix, buf...)
+				//logger.Debugf("Read %d bytes, expected %d, total read so far: %d", readLength, bufSize, readBytes+readLength)
+				payloadWithTypePrefix = append(payloadWithTypePrefix, buf[:readLength]...)
 			}
 			readBytes += readLength
 		}
@@ -382,19 +396,43 @@ func (t *p2pTransporter) readDataRoutine(pid string, stream network.Stream) {
 		if readBytes != int(messageLength) {
 			common.Panic(fmt.Errorf("failed to read protobuf message: length: %d doesn't match prefix: %d, from: %s", readBytes, int(messageLength), pid))
 		}
-		payload := payloadWithTypePrefix[1:messageLength]
+		logger.Debugf("payloadWithTypePrefix length: %d, first byte: %d", len(payloadWithTypePrefix), payloadWithTypePrefix[0])
 		switch payloadWithTypePrefix[0] {
 		case MessagePrefix:
+			// Extract the MessageWrapper bytes (everything after the prefix)
+			messageWrapperBytes := payloadWithTypePrefix[1:]
+			showBytes := 20
+			if len(messageWrapperBytes) < showBytes {
+				showBytes = len(messageWrapperBytes)
+			}
+			logger.Debugf("MessagePrefix received, messageWrapperBytes length: %d, first few bytes: %v",
+				len(messageWrapperBytes), messageWrapperBytes[:showBytes])
 			var m tss.MessageWrapper
+
+			err := proto.Unmarshal(messageWrapperBytes, &m)
 			logger.Debugf("received a tss message from: %s", m.From.GetMoniker())
-			err := proto.Unmarshal(payload, &m)
+			logger.Debugf("received a tss message from: %s", m.From.GetId())
+			logger.Debugf("received a tss message from key: %s", hex.EncodeToString(m.From.GetKey()))
+			logger.Debugf("received a tss message to: %s", m.To)
+			logger.Debugf("received a tss message isBroadcast: %v", m.IsBroadcast)
+			logger.Debugf("received a tss message isToOldCommittee: %v", m.IsToOldCommittee)
+			logger.Debugf("received a tss message isToOldAndNewCommittees: %v", m.IsToOldAndNewCommittees)
+			//logger.Debugf("received a tss message message: %v", m.Message)
 			if err != nil {
+				logger.Errorf("Failed to unmarshal MessageWrapper. Error: %v", err)
+				logger.Errorf("MessageWrapper bytes length: %d", len(messageWrapperBytes))
+				showBytes = 50
+				if len(messageWrapperBytes) < showBytes {
+					showBytes = len(messageWrapperBytes)
+				}
+				logger.Errorf("First 50 bytes: %v", messageWrapperBytes[:showBytes])
 				common.Panic(fmt.Errorf("failed to unmarshal MessagePrefix, not a valid protobuf format: %v. from: %s", err, pid))
 			}
 			if t.broadcastSanityCheck && m.IsBroadcast {
+				logger.Debugf("received a tss message isBroadcast: %v", m.IsBroadcast)
 				// we cannot use gob encoding here because the type spec registered relies on message sequence
 				// in other word, it might be not deterministic https://stackoverflow.com/a/33228913/1147187
-				hash := sha256.Sum256(payload)
+				hash := sha256.Sum256(messageWrapperBytes)
 
 				var to []string
 				for _, id := range m.To {
@@ -405,21 +443,21 @@ func (t *p2pTransporter) readDataRoutine(pid string, stream network.Stream) {
 					From:                    pid,
 					To:                      to,
 					Hash:                    hash[:],
-					OriginMsg:               payload,
+					OriginMsg:               messageWrapperBytes,
 					IsToOldAndNewCommittees: m.IsToOldAndNewCommittees}
 				t.sanityCheckMtx.Lock()
 				t.pendingCheckHashMsg[keyOf(msgWithHash)] = msgWithHash
 				var numOfDest int
 				if to == nil {
 					for _, p := range t.expectedPeers {
-						if p.Pretty() != pid {
+						if p.String() != pid {
 							// send our hashing of this message
 							msgWithHashPayload, err := proto.Marshal(msgWithHash)
 							if err != nil {
 								common.Panic(fmt.Errorf("cannot marshal P2PMessageWithHash: %v", err))
 							}
 							msgWithHashPayload = append([]byte{HashMessagePrefix}, msgWithHashPayload...)
-							err = t.Send(msgWithHashPayload, common.TssClientId(p.Pretty()))
+							err = t.Send(msgWithHashPayload, common.TssClientId(p.String()))
 							numOfDest++
 							if err != nil {
 								common.Panic(fmt.Errorf("cannot send P2PMessageWithHash: %v", err))
@@ -443,17 +481,18 @@ func (t *p2pTransporter) readDataRoutine(pid string, stream network.Stream) {
 					}
 				}
 				if t.verifiedPeersBroadcastMsgGuarded(keyOf(msgWithHash), numOfDest) {
-					t.receiveCh <- common.P2pMessageWrapper{MessageWrapperBytes: payload}
+					t.receiveCh <- common.P2pMessageWrapper{MessageWrapperBytes: messageWrapperBytes}
 					delete(t.pendingCheckHashMsg, keyOf(msgWithHash))
 				}
 				t.sanityCheckMtx.Unlock()
 			} else {
-				t.receiveCh <- common.P2pMessageWrapper{MessageWrapperBytes: payload}
+				t.receiveCh <- common.P2pMessageWrapper{MessageWrapperBytes: messageWrapperBytes}
 			}
 		case HashMessagePrefix:
 			var m P2PMessageWithHash
+			err := proto.Unmarshal(payloadWithTypePrefix[1:], &m)
 			logger.Debugf("received a hash message: %s from: %s", hex.EncodeToString(m.Hash), m.GetFrom())
-			err := proto.Unmarshal(payload, &m)
+
 			if err != nil {
 				common.Panic(fmt.Errorf("failed to unmarshal MessagePrefix, not a valid protobuf format: %v. from: %s", err, pid))
 			}
@@ -526,7 +565,7 @@ func (t *p2pTransporter) initBootstrapConnection(dht *libp2pdht.IpfsDHT) {
 
 func (t *p2pTransporter) initConnection(dht *libp2pdht.IpfsDHT) {
 	for _, pid := range t.expectedPeers {
-		if stream, ok := t.streams.Load(pid.Pretty()); ok && stream != nil {
+		if stream, ok := t.streams.Load(pid.String()); ok && stream != nil {
 			continue
 		}
 
@@ -547,7 +586,7 @@ func (t *p2pTransporter) initConnection(dht *libp2pdht.IpfsDHT) {
 }
 
 func (t *p2pTransporter) connectRoutine(dht *libp2pdht.IpfsDHT, pid peer.ID, protocolId string) {
-	logger.Debugf("trying to connect with %s", pid.Pretty())
+	logger.Debugf("trying to connect with %s", pid.String())
 	timeout := time.NewTimer(15 * time.Minute)
 	defer func() {
 		timeout.Stop()
@@ -596,9 +635,7 @@ func (t *p2pTransporter) connectRoutine(dht *libp2pdht.IpfsDHT, pid peer.ID, pro
 			} else {
 				err := t.host.Connect(t.ctx, peer.AddrInfo{pid, t.host.Peerstore().Addrs(pid)})
 				if err != nil {
-					if err != swarm.ErrDialBackoff {
-						logger.Debugf("Direct Connection to %s failed, will retry, err: %v", pid.Pretty(), err)
-					}
+					logger.Debugf("Direct Connection to %s failed, will retry, err: %v", pid.String(), err)
 					continue
 				} else {
 					if atomic.LoadInt32(&t.numOfStreams) == int32(len(t.expectedPeers)) {
@@ -626,8 +663,7 @@ func (t *p2pTransporter) connectRoutine(dht *libp2pdht.IpfsDHT, pid peer.ID, pro
 }
 
 func (t *p2pTransporter) tryRelaying(pid peer.ID, protocolId string) error {
-	t.host.Network().(*swarm.Swarm).Backoff().Clear(pid)
-	relayaddr, err := multiaddr.NewMultiaddr("/p2p-circuit/p2p/" + pid.Pretty())
+	relayaddr, err := multiaddr.NewMultiaddr("/p2p-circuit/p2p/" + pid.String())
 	relayInfo := peer.AddrInfo{
 		ID:    pid,
 		Addrs: []multiaddr.Multiaddr{relayaddr},
@@ -661,8 +697,8 @@ func (t *p2pTransporter) setupDHTClient() *libp2pdht.IpfsDHT {
 	kademliaDHT, err := libp2pdht.New(
 		t.ctx,
 		t.host,
-		opts.Datastore(ds),
-		opts.Client(true),
+		libp2pdht.Datastore(ds),
+		libp2pdht.Mode(libp2pdht.ModeClient),
 	)
 	if err != nil {
 		common.Panic(err)
@@ -719,13 +755,13 @@ func (t *p2pTransporter) setExpectedPeers(nodeId string, signers map[string]int,
 	}
 
 	for expectedPeer, peerAddr := range mergedExpectedPeers {
-		if pid, err := peer.IDB58Decode(string(GetClientIdFromExpectedPeers(expectedPeer))); err != nil {
+		if pid, err := peer.Decode(string(GetClientIdFromExpectedPeers(expectedPeer))); err != nil {
 			common.Panic(err)
 		} else {
-			if pid.Pretty() == nodeId {
+			if pid.String() == nodeId {
 				continue
 			}
-			logger.Debugf("expect peer: %s", pid.Pretty())
+			logger.Debugf("expect peer: %s", pid.String())
 			if peerAddr != "" {
 				maddr, err := multiaddr.NewMultiaddr(peerAddr)
 				if err != nil {
