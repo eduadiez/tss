@@ -59,7 +59,7 @@ func bindP2pConfigs() {
 	regroupCmd.PersistentFlags().String("p2p.new_listen", "", "Adds a multiaddress to the listen list for child process")
 	//rootCmd.PersistentFlags().StringSlice("p2p.bootstraps", []string{}, "bootstrap server list in multiaddr format, i.e. /ip4/127.0.0.1/tcp/27148/p2p/12D3KooWMXTGW6uHbVs7QiHEYtzVa4RunbugxRcJhGU43qAvfAa1")
 	//rootCmd.PersistentFlags().StringSlice("p2p.relays", []string{}, "relay server list")
-	keygenCmd.PersistentFlags().StringSlice("p2p.peer_addrs", []string{}, "peer's multiple addresses")
+	rootCmd.PersistentFlags().StringSlice("p2p.peer_addrs", []string{}, "peer's multiple addresses")
 	regroupCmd.PersistentFlags().StringSlice("p2p.new_peer_addrs", []string{}, "unknown peer's multiple addresses")
 	//rootCmd.PersistentFlags().StringSlice("p2p.peers", []string{}, "peers in this threshold scheme")
 	//rootCmd.PersistentFlags().Bool("p2p.default_bootstrap", false, "whether to use default bootstrap")
